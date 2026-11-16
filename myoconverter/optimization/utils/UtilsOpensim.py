@@ -1,4 +1,25 @@
-import opensim
+def _missing_opensim(*_args, **_kwargs):
+    raise ImportError(
+        "OpenSim Python bindings ('opensim') are required for forward-kinematic validation "
+        "and Steps 2-3 muscle optimization (`conda install -c opensim-org opensim`). "
+        "For pure-Python Step 1 XML conversion, pass `convert_steps=[1], validation=False`."
+    )
+
+
+class _MissingOpenSimNamespace:
+    Model = staticmethod(_missing_opensim)
+
+    class CoordinateCouplerConstraint:
+        safeDownCast = staticmethod(_missing_opensim)
+
+    def __getattr__(self, _name):
+        return _missing_opensim
+
+
+try:
+    import opensim
+except ModuleNotFoundError:
+    opensim = _MissingOpenSimNamespace()
 import numpy as np
 import itertools
       

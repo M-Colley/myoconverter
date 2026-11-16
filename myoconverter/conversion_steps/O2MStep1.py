@@ -33,7 +33,8 @@ class BasicModelConvert:
     """
     
     def __init__(self, osim_model_file, geometry_path, saving_path,\
-                 add_ground_geom = False, treat_as_normal_path_point = False):
+                 add_ground_geom = False, treat_as_normal_path_point = False,\
+                 strict_parsers = True):
     
         """ Paremters
         
@@ -71,6 +72,7 @@ class BasicModelConvert:
         self.saving_path = saving_path
         self.add_ground_geom = add_ground_geom
         self.treat_as_normal_path_point = treat_as_normal_path_point
+        self.strict_parsers = strict_parsers
         self.converted_mjc_model_file = None
 
     def cvt1_ModelConvert(self):
@@ -85,6 +87,7 @@ class BasicModelConvert:
         kwargs['geometry_folder'] = self.geometry_path
         kwargs['add_ground_geom'] = self.add_ground_geom
         kwargs['treat_as_normal_path_point'] = self.treat_as_normal_path_point
+        kwargs['strict_parsers'] = self.strict_parsers
 
         ## convert the OpenSim model into MuJoCo
         self.converted_mjc_model_file = convert(self.osim_model_file, model_saving_path, **kwargs)

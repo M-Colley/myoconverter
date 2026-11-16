@@ -49,6 +49,10 @@ def convert(xml_file, output_folder, **kwargs):
   # Parse bodies and joints
   _parse_bodies_and_joints()
 
+  # Materialise any body-level spatial constraints (WeldConstraint, PointConstraint, ConstantDistanceConstraint)
+  for deferred_fn in getattr(cfg, "DEFERRED_CONSTRAINTS", []):
+    deferred_fn()
+
   # Parse forces
   _parse_forces()
 

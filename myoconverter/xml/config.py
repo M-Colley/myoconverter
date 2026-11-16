@@ -23,6 +23,9 @@ OUTPUT_PLOT_FOLDER = None
 # Parsing parameters
 ADD_GROUND_GEOM = None
 TREAT_AS_NORMAL_PATH_POINT = None
+STRICT_PARSERS = True
+SKIPPED_ELEMENTS = []
+DEFERRED_CONSTRAINTS = []
 
 # Variables for parsed OpenSim XML
 OPENSIM = None
@@ -31,6 +34,7 @@ O_BODYSET = None
 O_JOINTSET = None
 O_FORCESET = None
 O_CONSTRAINTSET = None
+O_CONTACTGEOMETRYSET = None
 
 # Variables for parsed MuJoCo XML
 MUJOCO = None
@@ -101,11 +105,14 @@ def initialise(xml_file, output_folder, **kwargs):
   ADD_GROUND_GEOM = kwargs.get("add_ground_geom", False)
 
   # Optional parameters for users
-  global TREAT_AS_NORMAL_PATH_POINT
+  global TREAT_AS_NORMAL_PATH_POINT, STRICT_PARSERS, SKIPPED_ELEMENTS, DEFERRED_CONSTRAINTS
   TREAT_AS_NORMAL_PATH_POINT = kwargs.get("treat_as_normal_path_point", False)
+  STRICT_PARSERS = kwargs.get("strict_parsers", True)
+  SKIPPED_ELEMENTS = []
+  DEFERRED_CONSTRAINTS = []
 
   # Read and parse OpenSim model
-  global OPENSIM, O_GROUND, O_BODYSET, O_JOINTSET, O_FORCESET, O_CONSTRAINTSET, O_MARKERSET
+  global OPENSIM, O_GROUND, O_BODYSET, O_JOINTSET, O_FORCESET, O_CONSTRAINTSET, O_MARKERSET, O_CONTACTGEOMETRYSET
   OPENSIM = etree.parse(xml_file, parser).getroot().find("Model")
   O_GROUND = OPENSIM.find("Ground")
   if O_GROUND is None:
@@ -120,6 +127,8 @@ def initialise(xml_file, output_folder, **kwargs):
   O_CONSTRAINTSET = [] if O_CONSTRAINTSET is None else O_CONSTRAINTSET
   O_MARKERSET = OPENSIM.find("MarkerSet/objects")
   O_MARKERSET = [] if O_MARKERSET is None else O_MARKERSET
+  O_CONTACTGEOMETRYSET = OPENSIM.find("ContactGeometrySet/objects")
+  O_CONTACTGEOMETRYSET = [] if O_CONTACTGEOMETRYSET is None else O_CONTACTGEOMETRYSET
 
   # Read and parse MuJoCo template
   global MUJOCO, M_GROUND, M_WORLDBODY, M_ASSET, M_TENDON, M_ACTUATOR, M_EQUALITY, M_CONTACT

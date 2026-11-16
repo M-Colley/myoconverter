@@ -2,7 +2,10 @@ from loguru import logger
 from myoconverter.conversion_steps.O2MStep1 import BasicModelConvert
 from myoconverter.conversion_steps.O2MStep2 import MomentArmOpt
 from myoconverter.conversion_steps.O2MStep3 import MuscleForceOpt
-from myoconverter.utils.generate_pdf import generate_pdf
+try:
+    from myoconverter.utils.generate_pdf import generate_pdf
+except ModuleNotFoundError:
+    generate_pdf = None
 import os
 
 class O2MSteps:
@@ -15,7 +18,8 @@ class O2MSteps:
                  osim_data_overwrite = False, convert = False,\
                  validation = False, generate_pdf = False, speedy = False,\
                  add_ground_geom = False,\
-                 treat_as_normal_path_point = False):
+                 treat_as_normal_path_point = False,\
+                 strict_parsers = True):
             
         """
         Parameters:
@@ -97,6 +101,7 @@ class O2MSteps:
         self.speedy = speedy
         self.add_ground_geom = add_ground_geom
         self.treat_as_normal_path_point = treat_as_normal_path_point
+        self.strict_parsers = strict_parsers
 
     def PipelineExecution(self):
     	
@@ -117,7 +122,8 @@ class O2MSteps:
     	    # load the first step converting class
             Step1 = BasicModelConvert(self.osim_model_file, self.geom_folder, path_step1,\
                                       add_ground_geom = self.add_ground_geom,\
-                                      treat_as_normal_path_point = self.treat_as_normal_path_point)
+                                      treat_as_normal_path_point = self.treat_as_normal_path_point,\
+                                      strict_parsers = self.strict_parsers)
     		
             if self.convert: # General model conversion, generate xxxx_cvt1.xml model
                 logger.info("Started step 1 conversion - cvt1.")
@@ -278,6 +284,8 @@ class O2MSteps:
         # converted folder.
         ###############################################################################
         if self.generate_pdf:
+            if generate_pdf is None:
+                raise ImportError("Generating PDF validation reports requires 'fpdf2' (`pip install fpdf2`).")
 
             logger.info("Generating pdf report based on the validation results.")
             logger.info("   This may take a while, suggest to do this after all validation steps...")

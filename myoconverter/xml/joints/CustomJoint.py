@@ -60,6 +60,20 @@ class CustomJoint(Joint):
     # it, see e.g. "flexion" Coordinate in MoBL_ARMS_module6_7_CMC.osim model. MuJoCo doesn't have such abstract
     # notion of a "Coordinate", and thus there cannot be a non-identity mapping from a DoF to itself
 
+    # Pre-check which coordinates in this joint have at least one unit-slope identity axis ([+/-1, 0])
+    coords_with_unit_axis = set()
+    for t_scan in transform_axes:
+      c_el = t_scan.find("coordinates")
+      if c_el is None or not c_el.text or c_el.text not in coordinates:
+        continue
+      fn_parent = t_scan.find("MultiplierFunction/function") if t_scan.find("MultiplierFunction") is not None else t_scan
+      sc_scan = float(t_scan.find("MultiplierFunction/scale").text) if t_scan.find("MultiplierFunction") is not None else 1.0
+      lf_el = fn_parent.find("LinearFunction/coefficients") if fn_parent is not None else None
+      if lf_el is not None and lf_el.text:
+        c_vals = sc_scan * str2vec(lf_el.text)
+        if np.isclose(abs(c_vals[0]), 1.0) and np.isclose(c_vals[1], 0.0):
+          coords_with_unit_axis.add(c_el.text)
+
     # Go through all six transforms
     transforms = ["rotation1", "rotation2", "rotation3", "translation1", "translation2", "translation3"]
     order = [3, 4, 5, 0, 1, 2]
@@ -107,11 +121,18 @@ class CustomJoint(Joint):
         scale = float(t.find("MultiplierFunction/scale").text)
         t = t.find("MultiplierFunction/function")
 
-      # See the comment before this loop. We have to designate one DoF per Coordinate as an independent variable,
-      # i.e. make its dependence linear
-      if coordinate is not None and coordinate.text is not None and not coordinate.text in dof_designated:
-        if self._designate_dof(t, params, coordinate):
+      # See the comment before this loop. We have to designate one DoF per Coordinate owned by THIS joint
+      # as an independent variable, i.e. make its dependence linear.
+      if (
+        coordinate is not None
+        and coordinate.text is not None
+        and coordinate.text in coordinates
+        and coordinate.text not in dof_designated
+      ):
+        require_unit = coordinate.text in coords_with_unit_axis
+        if self._designate_dof(t, params, coordinate, scale=scale, require_unit_linear=require_unit):
           dof_designated.append(coordinate.text)
+          scale = 1.0
 
       # Handle a "Constant" transformation. We're not gonna create this joint
       # but we need the transformation information to properly align the joint
@@ -130,8 +151,12 @@ class CustomJoint(Joint):
         params["_locked"] = True
         params["_transform_value"] = value
 
-      # Handle a "SimmSpline" or "NaturalCubicSpline" transformation with a quartic approximation
-      elif t.find("SimmSpline") is not None or t.find("NaturalCubicSpline") is not None:
+      # Handle a "SimmSpline", "NaturalCubicSpline", or "PiecewiseLinearFunction" transformation with a quartic approximation
+      elif (
+        t.find("SimmSpline") is not None
+        or t.find("NaturalCubicSpline") is not None
+        or t.find("PiecewiseLinearFunction") is not None
+      ):
 
         # We can't model the relationship between two joints using a spline, but we can try to approximate it
         # with a quartic function. So fit a quartic function and check that the error is small enough
@@ -143,9 +168,12 @@ class CustomJoint(Joint):
         elif t.find("NaturalCubicSpline") is not None:
           x_values = t.find("NaturalCubicSpline/x")
           y_values = t.find("NaturalCubicSpline/y")
+        elif t.find("PiecewiseLinearFunction") is not None:
+          x_values = t.find("PiecewiseLinearFunction/x")
+          y_values = t.find("PiecewiseLinearFunction/y")
         else:
           logger.critical("Could not find spline definition in the XML element; was expecting to find it under "
-                          "SimmSpline or NaturalCubicSpline")
+                          "SimmSpline, NaturalCubicSpline, or PiecewiseLinearFunction")
           raise RuntimeError
 
         # Convert into numpy arrays; apply scaling to y values
@@ -222,16 +250,54 @@ class CustomJoint(Joint):
 
       elif t.find("LinearFunction") is not None:
 
-        # I'm not sure how to handle a LinearFunction with coefficients != [1, 0] (the first one is slope,
-        # second intercept), except for [-1, 0] when we can just flip the axis
-        coefficients = scale*str2vec(t.find("LinearFunction/coefficients").text)
-        if abs(coefficients[0]) != 1 or coefficients[1] != 0:
-          logger.critical(f"How do we handle this linear function: {xml.attrib['name']}/{t.attrib['name']}?")
-          raise RuntimeError
-
-        # If first coefficient is negative, flip the joint axis
-        if coefficients[0] < 0:
-          flip_axis = True
+        coefficients = scale * str2vec(t.find("LinearFunction/coefficients").text)
+        if np.isclose(abs(coefficients[0]), 1.0) and np.isclose(coefficients[1], 0.0):
+          if params["name"] == (coordinate.text if coordinate is not None else None):
+            # Designated independent coordinate DoF
+            if coefficients[0] < 0:
+              flip_axis = True
+          else:
+            # Secondary axis coupled with unit slope (+/-1) to independent coordinate
+            independent_coordinate = coordinate.text
+            polycoef = np.array([0.0, float(coefficients[0]), 0.0, 0.0, 0.0])
+            etree.SubElement(
+              cfg.M_EQUALITY,
+              "joint",
+              joint1=params["name"],
+              joint2=independent_coordinate,
+              polycoef=vec2str(polycoef),
+              solimp="0.9999 0.9999 0.001 0.5 2",
+              active="true",
+            )
+            params["_motion_type"] = "dependent"
+        else:
+          # Coupled linear function y = intercept + slope * q (e.g. cervical/lumbar spine or scapular rhythm)
+          if coordinate is None or not coordinate.text:
+            logger.critical(f"LinearFunction without coordinate in {xml.attrib['name']}/{t.attrib['name']}")
+            raise RuntimeError
+          independent_coordinate = coordinate.text
+          slope, intercept = float(coefficients[0]), float(coefficients[1])
+          polycoef = np.array([intercept, slope, 0.0, 0.0, 0.0])
+          if "range" in params:
+            mapped = np.sort(slope * np.asarray(params["range"], dtype=float) + intercept)
+            if np.isclose(mapped[0], mapped[1]):
+              mapped[0] -= 1e-6
+            params["range"] = mapped
+            params["limited"] = True
+          if "user" in params:
+            params["user"] = slope * float(params["user"]) + intercept
+          if "_transform_value" in params:
+            params["_transform_value"] = slope * float(params["_transform_value"]) + intercept
+          etree.SubElement(
+            cfg.M_EQUALITY,
+            "joint",
+            joint1=params["name"],
+            joint2=independent_coordinate,
+            polycoef=vec2str(polycoef),
+            solimp="0.9999 0.9999 0.001 0.5 2",
+            active="true",
+          )
+          params["_motion_type"] = "dependent"
 
       # Other functions are not defined yet
       else:
@@ -268,7 +334,7 @@ class CustomJoint(Joint):
 
     return all_joints, all_params
 
-  def _designate_dof(self, t, params, coordinate):
+  def _designate_dof(self, t, params, coordinate, scale=1.0, require_unit_linear=False):
     """ Designate an OpenSim Coordinate as a MuJoCo DoF.
 
     Designate a Coordinate as a MuJoCo DoF (if applicable). This means that one of the MuJoCo joints (DoF) will
@@ -278,27 +344,34 @@ class CustomJoint(Joint):
     :param t: OpenSim sub-joint XML element
     :param params: Joint parameters
     :param coordinate: Copy of an OpenSim `Coordinate`
+    :param scale: Optional MultiplierFunction scale factor
+    :param require_unit_linear: If True, only designate an axis with unit linear slope ([+/-1, 0])
     :return: Boolean indicating whether a Coordinate has been designated.
-    :raises: NotImplementedError if `t` is not a `SimmSpline` or `LinearFunction`, or if the mapping between
-      `Coordinate` and designated DoF is not linear.
-    :raises: RunTimeWarning if `LinearFunction` has non-identity coefficients
     """
 
     # Find out the type of dependency
-    if t.find("SimmSpline") is not None:
+    spline_tag = None
+    for candidate_tag in ("SimmSpline", "NaturalCubicSpline", "PiecewiseLinearFunction"):
+      if t.find(candidate_tag) is not None:
+        spline_tag = candidate_tag
+        break
+
+    if spline_tag is not None:
 
       # Check if the designated dof is a linear mapping -- if so, we should use it
-      x_values = str2vec(t.find("SimmSpline/x").text)
-      y_values = str2vec(t.find("SimmSpline/y").text)
+      x_values = str2vec(t.find(f"{spline_tag}/x").text)
+      y_values = scale * str2vec(t.find(f"{spline_tag}/y").text)
       fit, polycoef, joint_range = fit_spline(x_values, y_values)
 
       if len(x_values) > 2 and not np.all(np.isclose(x_values, y_values)):
         # Designated dof cannot (?) have a non-linear mapping
         return False
+      if require_unit_linear and not (np.isclose(abs(polycoef[1]), 1.0) and np.isclose(polycoef[0], 0.0)):
+        return False
 
       # Update range as min/max of the approximated range
       if "range" in params:
-        params["range"] = fit(params["range"])
+        params["range"] = np.sort(fit(params["range"]))
       else:
         params["range"] = joint_range
 
@@ -313,44 +386,58 @@ class CustomJoint(Joint):
       # Make this into an identity mapping
       coefs = etree.SubElement(etree.SubElement(t, "LinearFunction"), "coefficients")
       coefs.text = "1 0"
-      t.remove(t.find("SimmSpline"))
+      t.remove(t.find(spline_tag))
 
     elif t.find("LinearFunction") is not None:
 
-      coefficients = str2vec(t.find("LinearFunction/coefficients").text)
-      polycoef = np.array([coefficients[1], coefficients[0], 0, 0, 0])
-      if coefficients[0] != 1 and coefficients[1] != 0:
-        logger.warning("This LinearFunction parsing has not been tested, you should make sure it works.")
-        raise RuntimeWarning
-        fit = lambda x: coefficients[0] * x + x
-        # Update range as min/max of the approximated range
+      coefficients = scale * str2vec(t.find("LinearFunction/coefficients").text)
+      slope, intercept = float(coefficients[0]), float(coefficients[1])
+      if np.isclose(slope, 0.0):
+        return False
+      if require_unit_linear and not (np.isclose(abs(slope), 1.0) and np.isclose(intercept, 0.0)):
+        return False
+
+      polycoef = np.array([intercept, slope, 0.0, 0.0, 0.0])
+      if not (np.isclose(abs(slope), 1.0) and np.isclose(intercept, 0.0)):
+        abs_slope = abs(slope)
+        signed_intercept = intercept if slope > 0 else -intercept
         if "range" in params:
-          params["range"] = fit(params["range"])
-        # Update default value and _transform_value
+          mapped = np.sort(abs_slope * np.asarray(params["range"], dtype=float) + signed_intercept)
+          if np.isclose(mapped[0], mapped[1]):
+            mapped[0] -= 1e-6
+          params["range"] = mapped
         if "user" in params:
-          params["user"] = fit(params["user"])
+          params["user"] = abs_slope * float(params["user"]) + signed_intercept
         if "_transform_value" in params:
-          params["_transform_value"] = fit(params["_transform_value"])
-        # Should we convert this into an identity mapping as is done above?
+          params["_transform_value"] = abs_slope * float(params["_transform_value"]) + signed_intercept
+        t.find("LinearFunction/coefficients").text = "1 0" if slope > 0 else "-1 0"
+
+    elif t.find("Constant") is not None:
+      return False
 
     else:
-      logger.critical("Only LinearFunction and SimmSpline transformation types are currently implemented")
+      logger.critical("Only LinearFunction and spline transformation types are currently implemented")
       raise NotImplementedError
 
     # Range of designated dof may have been modified above, if the mapping between Coordinate and designated dof is
     # not identity. In that case, we need to update the dependencies (polycoefs) of constraints that depend on this
     # Coordinate/dof
     for constraint in cfg.M_EQUALITY.findall(f"joint[@joint2='{coordinate.text}']"):
-      # Currently works only on linear mappings
       constraint_polycoef = str2vec(constraint.attrib["polycoef"])
-      if np.allclose(polycoef, np.array([0, 1, 0, 0, 0])):  # Identity mapping, no need to update anything
-        pass
+      if np.allclose(polycoef, np.array([0, 1, 0, 0, 0])) or np.allclose(polycoef, np.array([0, -1, 0, 0, 0])):
+        if polycoef[1] < 0:
+          # Axis will be flipped below, so q_mjc == q_osim
+          pass
       else:
-        if not is_linear(polycoef) or not is_linear(constraint_polycoef):
-          logger.critical("Updating constraint polycoefs with non-linear mappings has not been implemented.")
-          raise NotImplementedError
-        constraint_polycoef[1] /= polycoef[1]
-        constraint.attrib["polycoef"] = vec2str(constraint_polycoef)
+        # q_mjc = |a| * q_osim + signed_b  =>  q_osim = (q_mjc - signed_b) / |a|
+        abs_a = abs(polycoef[1])
+        signed_b = polycoef[0] if polycoef[1] > 0 else -polycoef[0]
+        p_orig = np.polynomial.polynomial.Polynomial(constraint_polycoef)
+        q_sub = np.polynomial.polynomial.Polynomial([-signed_b / abs_a, 1.0 / abs_a])
+        composed = (p_orig(q_sub)).coef
+        new_poly = np.zeros((5,))
+        new_poly[: min(5, len(composed))] = composed[:5]
+        constraint.attrib["polycoef"] = vec2str(new_poly)
 
     # Designate this dof as 'coordinate.text'
     params["name"] = coordinate.text

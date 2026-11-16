@@ -5,9 +5,17 @@
 
 import numpy as np
 import os
-import trimesh
-import pyvista
 from shutil import copyfile
+
+try:
+  import trimesh
+except ModuleNotFoundError:
+  trimesh = None
+
+try:
+  import pyvista
+except ModuleNotFoundError:
+  pyvista = None
 
 from loguru import logger
 
@@ -43,12 +51,18 @@ def copy_mesh_file(mesh_file, geometry_folder, output_geometry_folder):
 
   # Transform a vtk file into an stl file and repair the mesh
   if ext_lower == ".vtp":
+    if pyvista is None or trimesh is None:
+      raise ImportError("Converting .vtp mesh files requires 'pyvista' and 'trimesh' (`pip install pyvista trimesh`).")
 
     # Read the vtp file with pyvista
     pymesh = pyvista.read(os.path.join(geometry_folder, mesh_file))
 
     # Convert into trimesh (see https://github.com/pyvista/pyvista/discussions/2268)
-    pymesh = pymesh.extract_surface().triangulate()
+    try:
+      surf = pymesh.extract_surface(algorithm="dataset_surface")
+    except TypeError:
+      surf = pymesh.extract_surface()
+    pymesh = surf.triangulate()
     faces_as_array = pymesh.faces.reshape((-1, 4))[:, 1:]
     tmesh = trimesh.Trimesh(pymesh.points, faces_as_array)
 
@@ -66,6 +80,8 @@ def copy_mesh_file(mesh_file, geometry_folder, output_geometry_folder):
 
   # Convert obj or ply meshes into stl via trimesh
   elif ext_lower in {".obj", ".ply"}:
+    if trimesh is None:
+      raise ImportError(f"Converting {ext_lower} mesh files requires 'trimesh' (`pip install trimesh`).")
     tmesh = trimesh.load(os.path.join(geometry_folder, mesh_file), force="mesh")
     tmesh.export(stl_filepath)
 

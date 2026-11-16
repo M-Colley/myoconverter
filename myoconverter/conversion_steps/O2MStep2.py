@@ -16,7 +16,7 @@ import pickle
 import os
 import numpy as np
 import mujoco
-import opensim
+from myoconverter.optimization.utils.UtilsOpensim import opensim
 import seaborn as sns
 import matplotlib.pyplot as plt 
 import glob

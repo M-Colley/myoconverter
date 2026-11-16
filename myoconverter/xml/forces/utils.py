@@ -61,3 +61,97 @@ def calculate_length_range(range, optimal_fiber_length, tendon_slack_length, pen
       return sol.x
 
   return np.array([np.nan, np.nan])
+
+
+def ensure_contact_geometry(geom_ref):
+  """Materialize an OpenSim `<ContactSphere>` or `<ContactHalfSpace>` as a MuJoCo `<geom>` and return its name."""
+  from lxml import etree
+  from loguru import logger
+  from scipy.spatial.transform import Rotation
+
+  from myoconverter.xml import config as cfg
+  from myoconverter.xml.utils import element_txt2num, get_body_and_transform, str2vec, vec2str
+
+  if not geom_ref:
+    return None
+  leaf = [tok for tok in geom_ref.strip().split("/") if tok][-1]
+
+  existing = cfg.M_WORLDBODY.find(f".//geom[@name='{leaf}']")
+  if existing is not None:
+    return leaf
+
+  osim_geom = None
+  for item in getattr(cfg, "O_CONTACTGEOMETRYSET", []):
+    if item.attrib.get("name") == leaf:
+      osim_geom = item
+      break
+  if osim_geom is None and cfg.OPENSIM is not None:
+    for tag in ("ContactSphere", "ContactHalfSpace", "ContactMesh"):
+      osim_geom = cfg.OPENSIM.find(f".//{tag}[@name='{leaf}']")
+      if osim_geom is not None:
+        break
+
+  if osim_geom is None:
+    logger.warning(f"Referenced OpenSim ContactGeometry '{geom_ref}' not found, skipping.")
+    return None
+
+  frame_ref = None
+  for ftag in ("socket_frame", "body_name", "body"):
+    el = osim_geom.find(ftag)
+    if el is not None and el.text is not None and el.text.strip():
+      frame_ref = el.text.strip()
+      break
+  if not frame_ref:
+    frame_ref = "ground"
+
+  try:
+    parent_body, T_frame = get_body_and_transform(cfg.OPENSIM, cfg.M_WORLDBODY, frame_ref)
+  except RuntimeError:
+    logger.warning(f"Could not resolve parent body '{frame_ref}' for ContactGeometry '{leaf}', skipping.")
+    return None
+
+  loc_el = osim_geom.find("location")
+  loc = str2vec(loc_el.text) if loc_el is not None and loc_el.text else np.zeros(3)
+  pos_in_body = (T_frame @ np.append(loc, 1.0))[:3]
+
+  ori_el = osim_geom.find("orientation")
+  ori = str2vec(ori_el.text) if ori_el is not None and ori_el.text else np.zeros(3)
+  R_geom = T_frame[:3, :3] @ Rotation.from_euler("XYZ", ori).as_matrix()
+
+  if osim_geom.tag == "ContactSphere":
+    radius = element_txt2num(osim_geom, "radius", default=0.01)
+    etree.SubElement(
+      parent_body,
+      "geom",
+      name=leaf,
+      type="sphere",
+      pos=vec2str(pos_in_body),
+      size=f"{max(float(radius), 1e-5):.6g}",
+      rgba="0.2 0.8 0.4 0.5",
+      group="3",
+    )
+    return leaf
+
+  if osim_geom.tag == "ContactHalfSpace":
+    # OpenSim ContactHalfSpace occupies +X; outward free-space normal in local frame is [-1, 0, 0]
+    outward_normal = R_geom @ np.array([-1.0, 0.0, 0.0])
+    norm = np.linalg.norm(outward_normal)
+    if norm > 0:
+      outward_normal = outward_normal / norm
+    else:
+      outward_normal = np.array([0.0, 1.0, 0.0])
+    etree.SubElement(
+      parent_body,
+      "geom",
+      name=leaf,
+      type="plane",
+      pos=vec2str(pos_in_body),
+      zaxis=vec2str(outward_normal),
+      size="10 10 0.05",
+      rgba="0.85 0.85 0.85 0.3",
+      group="3",
+    )
+    return leaf
+
+  logger.warning(f"Unsupported ContactGeometry type <{osim_geom.tag} name='{leaf}'>, skipping.")
+  return None

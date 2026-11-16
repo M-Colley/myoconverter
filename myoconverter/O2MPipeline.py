@@ -86,6 +86,12 @@ def O2MPipeline(osim_file, geometry_folder, output_folder, **kwargs):
     speedy = kwargs.get("speedy", False)
     add_ground_geom = kwargs.get("add_ground_geom", False)
     treat_as_normal_path_point = kwargs.get("treat_as_normal_path_point", False)
+    lenient_parsers = kwargs.get("lenient_parsers", False)
+    strict_parsers = kwargs.get("strict_parsers", not lenient_parsers)
+    mjx = kwargs.get("mjx", False)
+    mjx_integrator = kwargs.get("mjx_integrator", "implicitfast")
+    scale_set = kwargs.get("scale_set", None)
+    export_card = kwargs.get("export_model_card", False)
 
     # set logging
     os.makedirs(output_folder, exist_ok=True)
@@ -125,9 +131,55 @@ def O2MPipeline(osim_file, geometry_folder, output_folder, **kwargs):
             speedy=speedy,
             add_ground_geom=add_ground_geom,
             treat_as_normal_path_point=treat_as_normal_path_point,
+            strict_parsers=strict_parsers,
         )
 
         O2MSteps_inst.PipelineExecution()
+
+        # Discover latest produced MJCF file for optional post-processing steps
+        latest_mjcf = None
+        for step_num in (3, 2, 1):
+            candidate = os.path.join(output_folder, f"{MODEL_NAME}_cvt{step_num}.xml")
+            if os.path.isfile(candidate):
+                latest_mjcf = candidate
+                break
+
+        if scale_set and latest_mjcf:
+            from myoconverter.utils.mjcf_scaling import scale_converted_mjcf
+
+            logger.info(f"Applying OpenSim ScaleSet '{scale_set}' to {latest_mjcf}")
+            latest_mjcf = str(scale_converted_mjcf(latest_mjcf, scale_set_xml=scale_set))
+
+        if mjx and latest_mjcf:
+            import json
+            from myoconverter.utils.mjx_postprocess import make_mjx_ready
+
+            logger.info(f"Post-processing {latest_mjcf} for MJX (integrator={mjx_integrator})")
+            mjx_report = make_mjx_ready(latest_mjcf, integrator=mjx_integrator)
+            latest_mjcf = mjx_report.get("output_xml", latest_mjcf)
+            report_path = os.path.join(output_folder, f"{MODEL_NAME}_mjx_report.json")
+            with open(report_path, "w", encoding="utf-8") as fp:
+                json.dump(mjx_report, fp, indent=2)
+
+        if export_card and latest_mjcf:
+            import json
+            from myoconverter.utils.model_card import export_model_card
+            from myoconverter.xml import config as xml_cfg
+
+            card_path = export_model_card(
+                output_folder,
+                MODEL_NAME,
+                osim_file=osim_file,
+                mjcf_file=latest_mjcf,
+                convert_steps=convert_steps,
+            )
+            skipped = getattr(xml_cfg, "SKIPPED_ELEMENTS", None)
+            if skipped:
+                with open(card_path, "r", encoding="utf-8") as fp:
+                    card_data = json.load(fp)
+                card_data["skipped_opensim_elements"] = list(skipped)
+                with open(card_path, "w", encoding="utf-8") as fp:
+                    json.dump(card_data, fp, indent=2)
     finally:
         logger.remove(log_id)
 
@@ -304,6 +356,42 @@ def build_arg_parser():
         const=True,
         default=False,
         help="If true, MovingPathPoints and ConditionalPathPoints will be treated as normal PathPoints",
+    )
+    argparser.add_argument(
+        "--lenient_parsers",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="If true, log and skip unimplemented OpenSim plugin Force/Constraint tags instead of aborting",
+    )
+    argparser.add_argument(
+        "--mjx",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="If true, emit an MJX/GPU-ready MJCF (<model>_mjx.xml) with primitive wraps and joint stability floors",
+    )
+    argparser.add_argument(
+        "--mjx_integrator",
+        type=str,
+        default="implicitfast",
+        help="MJX solver integrator when --mjx is enabled (implicitfast or Euler)",
+    )
+    argparser.add_argument(
+        "--scale_set",
+        type=str,
+        default=None,
+        help="Optional path to an OpenSim <ScaleSet>/<ScaleTool> XML file for subject-specific MJCF scaling",
+    )
+    argparser.add_argument(
+        "--export_model_card",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="If true, export <model>_model_card.json with SHA-256 provenance and validation metrics",
     )
     return argparser
 

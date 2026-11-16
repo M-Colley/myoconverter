@@ -48,11 +48,20 @@ class CoordinateCouplerConstraint(IParser):
 
     # Get the dependency
     coupled_coordinates_function = xml.find("coupled_coordinates_function")[0]
-    if coupled_coordinates_function.tag in ["SimmSpline", "NaturalCubicSpline"]:
+    scale = 1.0
+    if coupled_coordinates_function.tag == "MultiplierFunction":
+      scale_el = coupled_coordinates_function.find("scale")
+      if scale_el is not None and scale_el.text is not None:
+        scale = float(scale_el.text)
+      fn_container = coupled_coordinates_function.find("function")
+      if fn_container is not None and len(fn_container) > 0:
+        coupled_coordinates_function = fn_container[0]
+
+    if coupled_coordinates_function.tag in ["SimmSpline", "NaturalCubicSpline", "PiecewiseLinearFunction"]:
 
       # Get x and y values that define the spline
       x_values = str2vec(coupled_coordinates_function.find(".//x").text)
-      y_values = str2vec(coupled_coordinates_function.find(".//y").text)
+      y_values = scale * str2vec(coupled_coordinates_function.find(".//y").text)
 
       # Fit a spline
       fit, polycoef, _ = fit_spline(x_values, y_values)
@@ -71,7 +80,7 @@ class CoordinateCouplerConstraint(IParser):
     elif coupled_coordinates_function.tag == "LinearFunction":
 
       # Get coefficients of the linear function
-      coefs = str2vec(coupled_coordinates_function.find("coefficients").text)
+      coefs = scale * str2vec(coupled_coordinates_function.find("coefficients").text)
 
       # Make a quartic representation of the linear function
       polycoef = np.zeros((5,))
@@ -80,6 +89,19 @@ class CoordinateCouplerConstraint(IParser):
 
       # Dummy linear fit function
       fit = np.polynomial.polynomial.Polynomial.fit([0, 1], [0, 1], 1)
+
+    elif coupled_coordinates_function.tag == "PolynomialFunction":
+
+      # OpenSim PolynomialFunction stores coefficients from highest to lowest order
+      coefs_desc = scale * str2vec(coupled_coordinates_function.find("coefficients").text)
+      coefs_asc = coefs_desc[::-1]
+      if len(coefs_asc) > 5:
+        logger.warning(
+          f"Truncating PolynomialFunction of degree {len(coefs_asc) - 1} to quartic in "
+          f"CoordinateCouplerConstraint {xml.attrib['name']}"
+        )
+      polycoef = np.zeros((5,))
+      polycoef[: min(5, len(coefs_asc))] = coefs_asc[:5]
 
     else:
       logger.critical(f"Function type {coupled_coordinates_function.tag} has not been implemented")

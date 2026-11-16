@@ -97,10 +97,10 @@ jobs:
       - name: Set PYTHONPATH
         run: |
           echo "PYTHONPATH=${{ github.workspace }}" >> "$GITHUB_ENV"
-      - name: Run CLI and pipeline unit tests
+      - name: Run CLI, pipeline, and SimTK clinical unit tests
         run: |
           conda activate myoconverter
-          python -m pytest myoconverter/tests/test_cli_and_pipeline.py -v
+          python -m pytest myoconverter/tests/test_cli_and_pipeline.py myoconverter/tests/test_simtk_clinical_parsers.py myoconverter/tests/test_xml_converter_fixes.py myoconverter/tests/test_coordinate_limit_force.py myoconverter/tests/test_mjx_postprocess.py myoconverter/tests/test_mjcf_scaling.py myoconverter/tests/test_model_card.py -v
       - name: Test model conversion
         run: |
           conda activate myoconverter

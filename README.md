@@ -11,6 +11,13 @@
 # MyoConverter
 **MyoConverter** is a tool for converting OpenSim musculoskeletal (MSK) models to the MuJoCo model format with optimized muscle kinematics and kinetics.
 
+> **Fork Enhancements (`M-Colley/myoconverter`):**
+> This fork consolidates MuJoCo 3/4 compatibility fixes, MJX/GPU post-processing, anthropometric `<ScaleSet>` MJCF scaling, JSON provenance model cards, and extended SimTK parsers for **clinical, surgical, prosthetic, spine/neck, and non-human `.osim` models**:
+> - **Extended SimTK Joint & Coupled-Spine Support:** `FreeJoint`, `BallJoint`, `GimbalJoint`, `PlanarJoint`, `EllipsoidJoint`, plus fractional `LinearFunction`, `PiecewiseLinearFunction`, and `PolynomialFunction` kinematic couplings in `CustomJoint` and `CoordinateCouplerConstraint`.
+> - **Surgical, Prosthetic & Closed-Chain Constraints:** `WeldConstraint` (socket/arthrodesis fusion), `PointConstraint` (four-bar linkages), and `ConstantDistanceConstraint`.
+> - **Clinical, Moco & Contact Forces:** `DeGrooteFregly2016Muscle`, `Millard2012AccelerationMuscle`, `Delp1990Muscle_Deprecated`, `RigidTendonMuscle`, `ActivationCoordinateActuator`, `ExpressionBasedCoordinateForce`, `CoordinateLimitForce`, `TorqueActuator`, `PointActuator`, `BushingForce`, `SmoothSphereHalfSpaceForce`, and `HuntCrossleyForce` (`ContactSphere` / `ContactHalfSpace` sphere-plane pairs).
+> - **Pure-Python Step 1 + MJX & Scaling Pipeline Flags:** Run Step 1 XML conversion (`--convert_steps 1 --validation false`) without C++ OpenSim bindings, plus `--mjx`, `--scale_set <scales.xml>`, `--export_model_card`, and `--lenient_parsers`.
+
 Building upon the foundation of the previous [O2MConverter](https://github.com/aikkala/O2MConverter) project, we extensively rewrote the functions, incorporated new features, and ensured compatibility with the latest OpenSim 4.0+ models. Additionally, two optimization steps were introduced to enhance the accuracy of muscle properties in both kinematics and kinetics.
 
 See the [documentation](https://myoconverter.readthedocs.io/en/latest/index.html) for more information about the converter and the conversion process.

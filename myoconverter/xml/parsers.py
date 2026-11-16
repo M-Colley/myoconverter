@@ -45,6 +45,17 @@ class BaseParser:
 
     # Check if a parser has been implemented
     if xml.tag not in self.parsers:
+      elem_name = xml.attrib.get("name", "")
+      if not getattr(cfg, "STRICT_PARSERS", True) and self.component not in {"bodies", "joints"}:
+        logger.warning(
+          f"Skipping unimplemented {self.component} element <{xml.tag} name='{elem_name}'> "
+          f"(lenient parser mode enabled)."
+        )
+        if hasattr(cfg, "SKIPPED_ELEMENTS") and isinstance(cfg.SKIPPED_ELEMENTS, list):
+          cfg.SKIPPED_ELEMENTS.append(
+            {"component": self.component, "tag": xml.tag, "name": elem_name}
+          )
+        return None
       logger.critical(f"Parser for {self.component} type {xml.tag} has not been implemented. "
                       f"See {cfg.URL_API_XML} for a list of implemented parsers.")
       raise NotImplementedError

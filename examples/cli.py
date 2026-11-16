@@ -56,6 +56,42 @@ def build_cli_parser():
         default=False,
         help="Treat moving and conditional path points as fixed path points",
     )
+    parser.add_argument(
+        "--lenient_parsers",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Skip unimplemented OpenSim plugin Force/Constraint elements with a warning instead of failing",
+    )
+    parser.add_argument(
+        "--mjx",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Emit MJX/GPU-ready MJCF (<model>_mjx.xml) after conversion",
+    )
+    parser.add_argument(
+        "--mjx_integrator",
+        type=str,
+        default="implicitfast",
+        help="MJX integrator when --mjx is enabled",
+    )
+    parser.add_argument(
+        "--scale_set",
+        type=str,
+        default=None,
+        help="Optional OpenSim <ScaleSet>/<ScaleTool> XML path for subject-specific scaling",
+    )
+    parser.add_argument(
+        "--export_model_card",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Export JSON model card summarizing conversion provenance and validation metrics",
+    )
     return parser
 
 
